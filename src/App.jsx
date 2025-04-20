@@ -16,13 +16,13 @@ const LOOP_PROMPTS = [
   "Generate an image of [last description]"
 ];
 
-function Block({ block }) {
+function Block({ block, onExpandImage }) {
   return (
     <div className={`block block-${block.type} ${block.status}`}> 
       <div className="block-header">{block.type.toUpperCase()}</div>
       <div className="block-content">
         {block.type === "image" && block.content && !block.content.startsWith("Gen") ? (
-          <img src={block.content} alt="Generated" style={{ maxWidth: 180, maxHeight: 180, borderRadius: 8 }} />
+          <img src={block.content} alt="Generated" style={{ maxWidth: 180, maxHeight: 180, borderRadius: 8 }} onClick={() => onExpandImage(block.content)} />
         ) : (
           <pre>{block.content}</pre>
         )}
@@ -49,6 +49,7 @@ export default function App() {
   const [awaiting, setAwaiting] = useState(false);
   const [error, setError] = useState("");
   const [showPromptLibrary, setShowPromptLibrary] = useState(false);
+  const [expandedImage, setExpandedImage] = useState(null);
   const loopRef = useRef();
 
   // Add log entry
@@ -272,7 +273,7 @@ export default function App() {
             ) : (
               history.map((block, i) => (
                 <React.Fragment key={i}>
-                  <Block block={block} />
+                  <Block block={block} onExpandImage={setExpandedImage} />
                   {i < history.length - 1 && <span className="block-arrow">→</span>}
                 </React.Fragment>
               ))
@@ -285,6 +286,11 @@ export default function App() {
             {debugLog.join("\n")}
           </pre>
         </div>
+        {expandedImage && (
+          <div style={{position:'fixed',top:0,left:0,width:'100vw',height:'100vh',background:'rgba(0,0,0,0.8)',zIndex:1000,display:'flex',alignItems:'center',justifyContent:'center'}} onClick={()=>setExpandedImage(null)}>
+            <img src={expandedImage} alt="Expanded" style={{maxWidth:'90vw',maxHeight:'90vh',border:'4px solid #60a5fa',background:'#23262f'}} />
+          </div>
+        )}
       </div>
     </div>
   );
