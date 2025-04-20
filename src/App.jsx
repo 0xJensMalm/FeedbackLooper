@@ -1,20 +1,7 @@
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import "./App.css";
 
-const PROMPT_LIBRARY = [
-  "A futuristic cityscape at sunset",
-  "A wise old tree stump wizard",
-  "A robot painting a self-portrait",
-  "A surreal underwater library",
-  "A dragon reading a book to children"
-];
-
-// Loop prompt templates for each step
-const LOOP_PROMPTS = [
-  "Generate an image of [initial prompt]",
-  "Describe the image in an epic 3 paragraph short story, add an absurd twist in the last paragraph",
-  "Generate an image of [last description]"
-];
+const DEFAULT_DESCRIPTION_PROMPT = `Analyze the provided image in detail. Imagine this as a frame in a movie. Objectively and accurately describe whats in the image. Imagine the next scene, in the same style, with the same object, but with an absurd, wild twist - taking it in a whole new direction.`;
 
 function Block({ block, onExpandImage }) {
   return (
@@ -32,32 +19,66 @@ function Block({ block, onExpandImage }) {
   );
 }
 
+function PromptCard({ label, value, onChange, onSet }) {
+  return (
+    <div className="prompt-card">
+      <label className="prompt-card-label">{label}</label>
+      <textarea
+        className="prompt-card-textarea"
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        rows={4}
+      />
+      <button className="prompt-card-set" onClick={onSet}>✔️ Set & Save Template</button>
+    </div>
+  );
+}
+
 const ENV_API_KEY = import.meta.env.VITE_OPEN_API_KEY || "";
-//console.log("API KEY", ENV_API_KEY);
 console.log("TEST VAR", import.meta.env.VITE_TEST_VAR);
 
 export default function App() {
-  // UI State
-  const [prompt, setPrompt] = useState(PROMPT_LIBRARY[0]);
+  const [prompt, setPrompt] = useState("");
   const [loops, setLoops] = useState("infinite");
   const [model, setModel] = useState("gpt-4o");
   const [imageModel, setImageModel] = useState("dall-e-3");
   const [running, setRunning] = useState(false);
   const [loopCount, setLoopCount] = useState(0);
-  const [history, setHistory] = useState([]); // Each block: {type, content, status}
+  const [history, setHistory] = useState([]); 
   const [debugLog, setDebugLog] = useState([]);
   const [awaiting, setAwaiting] = useState(false);
   const [error, setError] = useState("");
   const [showPromptLibrary, setShowPromptLibrary] = useState(false);
   const [expandedImage, setExpandedImage] = useState(null);
+  const [style, setStyle] = useState("cinematic");
   const loopRef = useRef();
 
-  // Add log entry
+  const [promptCards, setPromptCards] = useState([
+    ''
+  ]);
+
+  const [descriptionPromptTemplate, setDescriptionPromptTemplate] = useState(() => {
+    const stored = localStorage.getItem('ACTIVE_LOOP_PROMPTS');
+    return typeof stored === 'string' && stored.trim() !== '' ? stored : DEFAULT_DESCRIPTION_PROMPT;
+  });
+
+  useEffect(() => {
+    if (showPromptLibrary) {
+      setPromptCards([descriptionPromptTemplate]);
+    }
+  }, [showPromptLibrary, descriptionPromptTemplate]);
+
+  const setDescriptionTemplate = () => {
+    const newTemplate = promptCards[0]; 
+    if (!newTemplate.trim()) return; 
+    setDescriptionPromptTemplate(newTemplate);
+    localStorage.setItem('ACTIVE_LOOP_PROMPTS', newTemplate);
+  };
+
   const log = (msg) => {
     setDebugLog((log) => [...log.slice(-49), `[${new Date().toLocaleTimeString()}] ${msg}`]);
   };
 
-  // OpenAI API call helpers
   async function generateImage(prompt) {
     log("Requesting image from OpenAI...");
     try {
@@ -95,12 +116,12 @@ export default function App() {
           "Authorization": `Bearer ${ENV_API_KEY}`
         },
         body: JSON.stringify({
-          model: "gpt-4o", // Use gpt-4o for vision
+          model: "gpt-4o", 
           messages: [
             {
               role: "user",
               content: [
-                { type: "text", text: "Describe this image in 3 epic paragraphs, with an absurd twist in the last paragraph." },
+                { type: "text", text: descriptionPromptTemplate },
                 { type: "image_url", image_url: { url: imageUrl } }
               ]
             }
@@ -119,74 +140,79 @@ export default function App() {
     }
   }
 
-  // Main loop
   async function runLoop() {
     setRunning(true);
     setLoopCount(0);
-    setDebugLog([]);
+    setHistory([]); 
     setError("");
-    setHistory([]);
+    setDebugLog(["Starting loop..."]);
     let count = 0;
-    let currentPrompt = prompt;
+    let currentImage = null; 
+    let currentDescription = null; 
+    let isFirstIteration = true;
+
     loopRef.current = true;
     try {
       while (loopRef.current && (loops === "infinite" || count < parseInt(loops))) {
-        // 1. Add prompt block
-        setHistory((h) => [
-          ...h,
-          { type: "prompt", content: currentPrompt, status: "done" }
-        ]);
-        log(`Loop ${count + 1}: Generating image for prompt: ${currentPrompt}`);
         setAwaiting(true);
-        let image;
-        try {
-          setHistory((h) => [
-            ...h,
-            { type: "image", content: "Generating...", status: "loading" }
-          ]);
-          image = await generateImage(currentPrompt);
-          setHistory((h) => {
-            const idx = h.findLastIndex(b => b.type === "image" && b.status === "loading");
-            if (idx >= 0) h[idx] = { ...h[idx], content: image, status: "done" };
-            return [...h];
-          });
-        } catch {
-          setHistory((h) => {
-            const idx = h.findLastIndex(b => b.type === "image" && b.status === "loading");
-            if (idx >= 0) h[idx] = { ...h[idx], status: "error" };
-            return [...h];
-          });
-          setAwaiting(false);
+        log(`Loop ${count + 1}: Starting iteration...`);
+
+        if (isFirstIteration) {
+          const initialImagePrompt = `Generate an image, like in a movie scene with ${prompt} in the style of ${style}`;
+          log(`Generating initial image: ${initialImagePrompt}`);
+          try {
+            currentImage = await generateImage(initialImagePrompt);
+            setHistory((h) => [...h, { type: "image", content: currentImage, status: "done" }]);
+            log("Initial image generated.");
+          } catch (e) {
+            setError(`Failed initial image generation: ${e}`);
+            setHistory((h) => [...h, { type: "image", content: `Error generating initial image: ${e}`, status: "error" }]);
+            loopRef.current = false; 
+            break;
+          }
+          isFirstIteration = false;
+        } else {
+          if (!currentDescription) {
+            setError("Error: No description available to generate next image.");
+            loopRef.current = false;
+            break;
+          }
+          const nextImagePrompt = `Generate an image of as the next frame in a movie or comic. ${currentDescription}`;
+          log(`Generating next image from description...`); 
+          try {
+            currentImage = await generateImage(nextImagePrompt); 
+            setHistory((h) => [...h, { type: "image", content: currentImage, status: "done" }]);
+            log("Next image generated.");
+          } catch (e) {
+            setError(`Failed next image generation: ${e}`);
+            setHistory((h) => [...h, { type: "image", content: `Error generating next image: ${e}`, status: "error" }]);
+            loopRef.current = false;
+            break;
+          }
+        }
+
+        if (!currentImage) {
+          setError("Error: No image available to describe.");
+          loopRef.current = false;
           break;
         }
-        log(`Loop ${count + 1}: Describing image...`);
-        setHistory((h) => [
-          ...h,
-          { type: "description", content: "Describing...", status: "loading" }
-        ]);
-        let desc;
+        log(`Requesting description for the latest image...`); 
         try {
-          desc = await describeImage(image);
-          setHistory((h) => {
-            const idx = h.findLastIndex(b => b.type === "description" && b.status === "loading");
-            if (idx >= 0) h[idx] = { ...h[idx], content: desc, status: "done" };
-            return [...h];
-          });
-        } catch {
-          setHistory((h) => {
-            const idx = h.findLastIndex(b => b.type === "description" && b.status === "loading");
-            if (idx >= 0) h[idx] = { ...h[idx], status: "error" };
-            return [...h];
-          });
-          setAwaiting(false);
+          currentDescription = await describeImage(currentImage); 
+          setHistory((h) => [...h, { type: "description", content: currentDescription, status: "done" }]);
+          log("Description generated.");
+        } catch (e) {
+          setError(`Failed description: ${e}`);
+          setHistory((h) => [...h, { type: "description", content: `Error generating description: ${e}`, status: "error" }]);
+          loopRef.current = false;
           break;
         }
+
         setAwaiting(false);
-        log(`Loop ${count + 1}: Success!`);
+        log(`Loop ${count + 1}: Iteration complete.`);
         count++;
         setLoopCount(count);
-        currentPrompt = desc;
-        await new Promise((r) => setTimeout(r, 500));
+        await new Promise((r) => setTimeout(r, 500)); 
       }
     } finally {
       setRunning(false);
@@ -212,7 +238,14 @@ export default function App() {
               className="prompt-input"
               value={prompt}
               onChange={e => setPrompt(e.target.value)}
-              placeholder="Enter prompt..."
+              placeholder="Enter initial prompt..."
+            />
+            <input
+              type="text"
+              className="style-input"
+              value={style}
+              onChange={e => setStyle(e.target.value)}
+              placeholder="Style (e.g., cinematic, watercolor)..."
             />
             <button className="prompt-library-btn" onClick={() => setShowPromptLibrary(v => !v)}>
               Loop Prompts
@@ -250,19 +283,20 @@ export default function App() {
         </div>
         {showPromptLibrary && (
           <div className="prompt-library-modal">
-            <div className="prompt-library-header">
-              <span>Loop Prompts</span>
-              <button className="close-btn" onClick={() => setShowPromptLibrary(false)}>×</button>
-            </div>
-            <ul>
-              {LOOP_PROMPTS.map((p, i) => (
-                <li key={i} style={{cursor:'default',color:'#e5e7eb',fontWeight:600,padding:'0.35rem 0.5rem'}}>{p}</li>
+            <div className="prompt-library-cards">
+              {promptCards.slice(0, 1).map((val, i) => ( 
+                <PromptCard
+                  key={i}
+                  label="Describe Image & Twist Template" 
+                  value={val}
+                  onChange={v => setPromptCards([v])} 
+                  onSet={setDescriptionTemplate} 
+                />
               ))}
-            </ul>
+            </div>
+            <button className="prompt-library-close" onClick={() => setShowPromptLibrary(false)}>Close</button>
             <div style={{marginTop:'1.1rem',fontSize:'0.97rem',color:'#bfc9d1'}}>
-              <b>[initial prompt]</b> is the prompt you enter above.<br/>
-              <b>[last description]</b> is the output from the previous description step.<br/>
-              These steps repeat endlessly.
+              (These placeholders are handled internally in the fixed prompts.)
             </div>
           </div>
         )}
